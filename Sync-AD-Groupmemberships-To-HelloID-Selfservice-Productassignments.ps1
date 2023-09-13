@@ -32,8 +32,8 @@ $PowerShellActionName = "Add-ADUserToADGroup" # Define the name of the PowerShel
 #Correlation Configuration
 $PowerShellActionVariableCorrelationProperty = "Group" # The name of the property of HelloID Self service Product action variables to match to AD Groups (name of the variable of the PowerShell action that contains the group)
 $adGroupCorrelationProperty = "samAccountName" # The name of the property of AD groups to match Groups in HelloID Self service Product actions (the group)
-$adUserCorrelationProperty = "SID" # The name of the property of AD users to match to HelloID users
-$helloIDUserCorrelationProperty = "immutableId" # The name of the property of HelloID users to match to AD users
+$adUserCorrelationProperty = "UserPrincipalName" # The name of the property of AD users to match to HelloID users
+$helloIDUserCorrelationProperty = "username" # The name of the property of HelloID users to match to AD users
 
 #region functions
 function Resolve-HTTPError {
@@ -345,7 +345,7 @@ try {
     $properties = @(
         $adGroupCorrelationProperty
         , "SID"
-        
+        , "distinguishedName"
     )
 
     $adQuerySplatParams = @{
@@ -369,7 +369,7 @@ try {
             if ($verboseLogging -eq $true) {
                 Hid-Write-Status -Event Information -Message "Querying AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]"
             }
-            $adGroupsInOU = Get-ADGroup @adQuerySplatParams -SearchBase $ADGroupsOU | Select-Object $properties
+            $adGroupsInOU = Get-ADGroup @adQuerySplatParams -SearchBase $ADGroupsOU -SearchScope OneLevel | Select-Object $properties
             if ($adGroupsInOU -is [array]) {
                 [void]$adGroups.AddRange($adGroupsInOU)
             }
@@ -415,7 +415,7 @@ try {
                 #     Hid-Write-Status -Event Information -Message "Querying AD groupmembers of group [$($adGroup.SID)]"
                 # }
                 $adGroupMembers = $null
-                $adGroupMembers = Get-ADGroupMember -Identity $adGroup.SID | Select-Object $properties
+                $adGroupMembers = Get-ADObject -LDAPFilter "(memberOf=$($adGroup.distinguishedName))" -Properties $properties
                 
                 if (($adGroupMembers.SID | Measure-Object).Count -ge 1) {
                     $adGroupMembers | ForEach-Object {
@@ -611,6 +611,7 @@ try {
                 userGuid               = "$($newProductAssignmentObject.userGuid)"
                 source                 = "$($newProductAssignmentObject.source)"
                 executeApprovalActions = $newProductAssignmentObject.executeApprovalActions
+                comment                = "Synchronized assignment from AD Groupmembership"
             } | ConvertTo-Json
 
             $splatParams = @{
