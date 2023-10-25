@@ -1,39 +1,42 @@
 #####################################################
-# HelloID-SA-Sync-AD-Groupmemberships-To-HelloID-Selfservice-Productassignments
+# HelloID-Conn-SA-Sync-AD-Groupmemberships-To-HelloID-Productassignments
 #
-# Version: 1.0.0
+# Version: 1.2.0
 #####################################################
-$VerbosePreference = "SilentlyContinue"
+# Set to false to acutally perform actions - Only run as DryRun when testing/troubleshooting!
+$dryRun = $false
+# Set to true to log each individual action - May cause lots of logging, so use with cause, Only run testing/troubleshooting!
+$verboseLogging = $false
+
+switch ($verboseLogging) {
+    $true { $VerbosePreference = "Continue" }
+    $false { $VerbosePreference = "SilentlyContinue" }
+}
 $informationPreference = "Continue"
 $WarningPreference = "Continue"
 
 # Set TLS to accept TLS, TLS 1.1 and TLS 1.2
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
 
-# Set to false to acutally perform actions - Only run as DryRun when testing/troubleshooting!
-$dryRun = $false
-# Set to true to log each individual action - May cause lots of logging, so use with cause, Only run testing/troubleshooting!
-$verboseLogging = $false
-
 # Make sure to create the Global variables defined below in HelloID
 #HelloID Connection Configuration
 # $script:PortalBaseUrl = "" # Set from Global Variable
-# $portalApiKey ="" # Set from Global Variable
+# $portalApiKey = "" # Set from Global Variable
 # $portalApiSecret = "" # Set from Global Variable
 
-#AD Connection Configuration
+# Active Directory Connection Configuration
 $ADGroupsFilter = "name -like `"App-*`" -or name -like `"*-App`"" # Optional, when no filter is provided ($ADGroupsFilter = "*"), all groups will be queried
 $ADGroupsOUs = @("OU=Applications,OU=Groups,OU=Resources,DC=enyoi,DC=org") # Optional, when no OUs are provided ($ADGroupsOUs = @()), all ous will be queried
 
 #HelloID Self service Product Configuration
-$ProductSkuPrefix = 'ADGRP' # Optional, when no SkuPrefix is provided ($ProductSkuPrefix = $null), all products will be queried
+$ProductSkuPrefix = "APPGRP"
 $PowerShellActionName = "Add-ADUserToADGroup" # Define the name of the PowerShell action
 
 #Correlation Configuration
-$PowerShellActionVariableCorrelationProperty = "Group" # The name of the property of HelloID Self service Product action variables to match to AD Groups (name of the variable of the PowerShell action that contains the group)
-$adGroupCorrelationProperty = "samAccountName" # The name of the property of AD groups to match Groups in HelloID Self service Product actions (the group)
-$adUserCorrelationProperty = "UserPrincipalName" # The name of the property of AD users to match to HelloID users
-$helloIDUserCorrelationProperty = "username" # The name of the property of HelloID users to match to AD users
+# The name of the property of HelloID users to match to AD users - value has to match the value of the propertye specified in $adUserCorrelationProperty
+$helloIDUserCorrelationProperty = "username"
+# The name of the property of AD users to match to HelloID users - value has to match the value of the propertye specified in $helloIDUserCorrelationProperty
+$adUserCorrelationProperty = "userPrincipalName"
 
 #region functions
 function Resolve-HTTPError {
@@ -135,11 +138,12 @@ function Invoke-HIDRestmethod {
         $headers.Add("Content-Type", $ContentType)
         $headers.Add("Accept", $ContentType)
 
-        $splatParams = @{
-            Uri         = "$($script:PortalBaseUrl)/api/v1/$($Uri)"
-            Headers     = $headers
-            Method      = $Method
-            ErrorAction = "Stop"
+        $splatWebRequest = @{
+            Uri             = "$($script:PortalBaseUrl)/api/v1/$($Uri)"
+            Headers         = $headers
+            Method          = $Method
+            UseBasicParsing = $true
+            ErrorAction     = "Stop"
         }
         
         if (-not[String]::IsNullOrEmpty($PageSize)) {
@@ -148,11 +152,11 @@ function Invoke-HIDRestmethod {
             $skip = 0
             $take = $PageSize
             Do {
-                $splatParams["Uri"] = "$($script:PortalBaseUrl)/api/v1/$($Uri)?skip=$($skip)&take=$($take)"
+                $splatWebRequest["Uri"] = "$($script:PortalBaseUrl)/api/v1/$($Uri)?skip=$($skip)&take=$($take)"
 
                 Write-Verbose "Invoking [$Method] request to [$Uri]"
                 $response = $null
-                $response = Invoke-RestMethod @splatParams
+                $response = Invoke-RestMethod @splatWebRequest -Verbose:$false
                 if (($response.PsObject.Properties.Match("pageData") | Measure-Object).Count -gt 0) {
                     $dataset = $response.pageData
                 }
@@ -175,12 +179,12 @@ function Invoke-HIDRestmethod {
         else {
             if ($Body) {
                 Write-Verbose "Adding body to request"
-                $splatParams["Body"] = ([System.Text.Encoding]::UTF8.GetBytes($body))
+                $splatWebRequest["Body"] = ([System.Text.Encoding]::UTF8.GetBytes($body))
             }
 
             Write-Verbose "Invoking [$Method] request to [$Uri]"
             $response = $null
-            $response = Invoke-RestMethod @splatParams
+            $response = Invoke-RestMethod @splatWebRequest -Verbose:$false
 
             return $response
         }
@@ -190,56 +194,14 @@ function Invoke-HIDRestmethod {
         throw $_
     }
 }
-
 #endregion functions
 
 #region script
 Hid-Write-Status -Event Information -Message "Starting synchronization of Active Directory groupmemberships to HelloID Self service Productassignments"
 Hid-Write-Status -Event Information -Message "------[HelloID]------"
+#region Get HelloID Products
 try {
-    # if ($verboseLogging -eq $true) {
-    #     Hid-Write-Status -Event Information -Message "Querying Self service product actions from HelloID"
-    # }
-
-    $splatParams = @{
-        Method   = "GET"
-        Uri      = "selfservice/actions"
-        PageSize = 1000
-    }
-    $helloIDSelfServiceProductActions = Invoke-HIDRestMethod @splatParams
-
-    # Filter for specified actions
-    $helloIDSelfServiceProductActionsInScope = [System.Collections.ArrayList]@()
-    $PowerShellActionGroupsInScope = [System.Collections.ArrayList]@()
-    foreach ($helloIDSelfServiceProductAction in $helloIDSelfServiceProductActions | Where-Object { $_.name -eq "$PowerShellActionName" -and $_.executionEntry -eq "powershell-script" -and $_.executionType -eq "native" -and $_.executeOnState -ne "0" -and $_.executeOnState -ne $null }) {
-        foreach ($variable in $helloIDSelfServiceProductAction.variables) {
-            if ( $variable.Name -eq $PowerShellActionVariableCorrelationProperty -and $variable.Value -notlike "{{*}}") {
-                if ($helloIDSelfServiceProductAction -notin $helloIDSelfServiceProductActionsInScope) {
-                    [void]$helloIDSelfServiceProductActionsInScope.Add($helloIDSelfServiceProductAction)
-                }
-
-                if (-not[string]::IsNullOrEmpty($variable.Value) -and $variable.Value -notin $PowerShellActionGroupsInScope) {
-                    [void]$PowerShellActionGroupsInScope.Add($variable.Value)
-                }
-            }
-        }
-    }
-    
-    Hid-Write-Status -Event Success -Message "Successfully queried Self service product actions from HelloID (after filtering for specified custom powershell actions). Result count: $(($helloIDSelfServiceProductActionsInScope | Measure-Object).Count)"
-}
-catch {
-    $ex = $PSItem
-    $errorMessage = Get-ErrorMessage -ErrorObject $ex
-
-    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
-
-    throw "Error querying Self service product actions from HelloID. Error Message: $($errorMessage.AuditErrorMessage)"
-}
-
-try {
-    # if ($verboseLogging -eq $true) {
-    #     Hid-Write-Status -Event Information -Message "Querying Self service products from HelloID"
-    # }
+    Write-Verbose "Querying Self service products from HelloID"
 
     $splatParams = @{
         Method = "GET"
@@ -257,10 +219,7 @@ try {
         $helloIDSelfServiceProductsInScope = $helloIDSelfServiceProducts
     }
 
-    # Filter for products with specified actions
-    $helloIDSelfServiceProductsInScope = $helloIDSelfServiceProductsInScope | Where-Object { $_.selfServiceProductGUID -in $helloIDSelfServiceProductActionsInScope.objectGUID }
-
-    Hid-Write-Status -Event Success -Message "Successfully queried Self service products from HelloID (after filtering for products with specified actions only). Result count: $(($helloIDSelfServiceProductsInScope | Measure-Object).Count)"
+    Hid-Write-Status -Event Success -Message "Successfully queried Self service products from HelloID (after filtering for products with specified sku prefix only). Result count: $(($helloIDSelfServiceProductsInScope | Measure-Object).Count)"
 }
 catch {
     $ex = $PSItem
@@ -270,11 +229,105 @@ catch {
 
     throw "Error querying Self service products from HelloID. Error Message: $($errorMessage.AuditErrorMessage)"
 }
+#endregion Get HelloID Products
 
+#region Get HelloID Users
 try {
-    # if ($verboseLogging -eq $true) {
-    #     Hid-Write-Status -Event Information -Message "Querying  Self service Productassignments from HelloID"
-    # }
+    Write-Verbose "Querying Users from HelloID"
+
+    $splatWebRequest = @{
+        Method   = "GET"
+        Uri      = "users"
+        PageSize = 1000
+    }
+    $helloIDUsers = Invoke-HIDRestMethod @splatWebRequest
+
+    # $helloIDUsersGroupedOnUserName = $helloIDUsers | Group-Object -Property "userName" -AsHashTable -AsString
+    # $helloIDUsersGroupedOnUserGUID = $helloIDUsers | Group-Object -Property "userGUID" -AsHashTable -AsString
+    $helloIDUsersGrouped = $helloIDUsers | Group-Object -Property $helloIDUserCorrelationProperty -AsHashTable -AsString
+
+    Hid-Write-Status -Event Success -Message "Successfully queried Users from HelloID. Result count: $(($helloIDUsers | Measure-Object).Count)"
+}
+catch {
+    $ex = $PSItem
+    $errorMessage = Get-ErrorMessage -ErrorObject $ex
+
+    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
+
+    throw "Error querying Users from HelloID. Error Message: $($errorMessage.AuditErrorMessage)"
+}
+#endregion Get HelloID Users
+
+#region Get actions of Product
+try {
+    [System.Collections.ArrayList]$helloIDSelfServiceProductsInScopeWithActions = @()
+    Write-Verbose "Querying HelloID Self service Products with Actions"
+    foreach ($helloIDSelfServiceProductInScope in $helloIDSelfServiceProductsInScope) {
+        #region Get objects with Full Access to Shared Mailbox
+        try {
+            $helloIDSelfServiceProductInScopeWithActionsObject = [PSCustomObject]@{
+                productId   = $helloIDSelfServiceProductInScope.selfServiceProductGUID
+                name        = $helloIDSelfServiceProductInScope.name
+                description = $helloIDSelfServiceProductInScope.description
+                code        = $helloIDSelfServiceProductInScope.code
+                actions     = [System.Collections.ArrayList]@()
+            }
+
+            Write-Verbose "Querying actions of Product [$($helloIDSelfServiceProductInScope.selfServiceProductGUID)]"
+
+            $splatParams = @{
+                Method = "GET"
+                Uri    = "products/$($helloIDSelfServiceProductInScope.selfServiceProductGUID)"
+            }
+            $helloIDSelfServiceProduct = Invoke-HIDRestMethod @splatParams
+
+            # Add actions of all "grant" states
+            $helloIDSelfServiceProductActions = $helloIDSelfServiceProduct.onRequest + $helloIDSelfServiceProduct.onApprove
+            foreach ($helloIDSelfServiceProductAction in $helloIDSelfServiceProductActions) {
+                $helloIDSelfServiceProductActionObject = [PSCustomObject]@{
+                    actionGUID = $helloIDSelfServiceProductAction.actionGUID
+                    name       = $helloIDSelfServiceProductAction.name
+                    objectGUID = $helloIDSelfServiceProductAction.objectGUID
+                }
+
+                [void]$helloIDSelfServiceProductInScopeWithActionsObject.actions.Add($helloIDSelfServiceProductActionObject)
+            }
+
+            [void]$helloIDSelfServiceProductsInScopeWithActions.Add($helloIDSelfServiceProductInScopeWithActionsObject)
+
+            if ($verboseLogging -eq $true) {
+                Hid-Write-Status -Event Success "Successfully queried actions of Product [$($helloIDSelfServiceProductInScope.selfServiceProductGUID)]. Result count: $(($helloIDSelfServiceProduct.actions | Measure-Object).Count)"
+            }
+        }
+        catch {
+            $ex = $PSItem
+            $errorMessage = Get-ErrorMessage -ErrorObject $ex
+        
+            Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
+        
+            throw "Error querying actions of Product [$($helloIDSelfServiceProductInScope.productId)]. Error Message: $($errorMessage.AuditErrorMessage)"
+        }
+        #endregion Get objects with Full Access to Shared Mailbox
+    }
+
+    # Filter for products with specified actions
+    $helloIDSelfServiceProductsInScopeWithActionsInScope = $helloIDSelfServiceProductsInScopeWithActions | Where-Object { $PowerShellActionName -in $_.actions.name }
+
+    Hid-Write-Status -Event Success -Message "Successfully queried HelloID Self service Products with Actions (after filtering for products with specified action only). Result count: $(($helloIDSelfServiceProductsInScopeWithActionsInScope.actions | Measure-Object).Count)"
+}
+catch {
+    $ex = $PSItem
+    $errorMessage = Get-ErrorMessage -ErrorObject $ex
+
+    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
+
+    throw "Error querying HelloID Self service Products with Actions. Error Message: $($errorMessage.AuditErrorMessage)"
+}
+#endregion Get actions of Product
+
+#region Get HelloID Productassignments
+try {
+    Write-Verbose "Querying  Self service Productassignments from HelloID"
 
     $splatParams = @{
         Method   = "GET"
@@ -285,7 +338,7 @@ try {
 
     # Filter for for productassignments of specified products
     $helloIDSelfServiceProductassignmentsInScope = $null
-    $helloIDSelfServiceProductassignmentsInScope = $helloIDSelfServiceProductassignments | Where-Object { $_.productGuid -in $helloIDSelfServiceProductsInScope.selfServiceProductGUID }
+    $helloIDSelfServiceProductassignmentsInScope = $helloIDSelfServiceProductassignments | Where-Object { $_.productGuid -in $helloIDSelfServiceProductsInScopeWithActionsInScope.productId }
 
     $helloIDSelfServiceProductassignmentsInScopeGrouped = $helloIDSelfServiceProductassignmentsInScope | Group-Object -Property productGuid -AsHashTable -AsString
     Hid-Write-Status -Event Success -Message "Successfully queried Self service Productassignments from HelloID (after filtering for productassignments of specified products only). Result count: $(($helloIDSelfServiceProductassignmentsInScope | Measure-Object).Count)"
@@ -298,33 +351,7 @@ catch {
 
     throw "Error querying Self service Productassignments from HelloID. Error Message: $($errorMessage.AuditErrorMessage)"
 }
-
-try {
-    # if ($verboseLogging -eq $true) {
-    #     Hid-Write-Status -Event Information -Message "Querying Users from HelloID"
-    # }
-
-    $splatParams = @{
-        Method   = "GET"
-        Uri      = "users"
-        PageSize = 1000
-    }
-    $helloIDUsers = Invoke-HIDRestMethod @splatParams
-
-    $helloIDUsersInScope = $null
-    $helloIDUsersInScope = $helloIDUsers
-
-    $helloIDUsersInScopeGrouped = $helloIDUsersInScope | Group-Object -Property $helloIDUserCorrelationProperty -AsHashTable -AsString
-    Hid-Write-Status -Event Success -Message "Successfully queried Users from HelloID. Result count: $(($helloIDUsersInScope | Measure-Object).Count)"
-}
-catch {
-    $ex = $PSItem
-    $errorMessage = Get-ErrorMessage -ErrorObject $ex
-
-    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
-
-    throw "Error querying Users from HelloID. Error Message: $($errorMessage.AuditErrorMessage)"
-}
+#endregion Get HelloID Productassignments
 
 Hid-Write-Status -Event Information -Message "------[Active Directory]-----------"  
 try {
@@ -340,11 +367,10 @@ catch {
     throw "Error importing module [$moduleName]. Error Message: $($errorMessage.AuditErrorMessage)"
 }
 
-# Get AD Groups
+#region Get AD Groups
 try {  
     $properties = @(
-        $adGroupCorrelationProperty
-        , "SID"
+        "objectGuid"
         , "distinguishedName"
     )
 
@@ -383,89 +409,7 @@ try {
         }
     }
 
-    # Filter for groups that are in products
-    $adGroupsInScope = $null
-    $adGroupsInScope = $adGroups | Where-Object { $_.$adGroupCorrelationProperty -in $PowerShellActionGroupsInScope }
-
-    if (($adGroupsInScope.SID | Measure-Object).Count -ge 1) {
-        $adGroupsInScope | ForEach-Object {
-            # Get value of SID
-            $_.SID = $_.SID.Value
-        }
-    }
-
-    Hid-Write-Status -Event Success -Message "Successfully queried AD groups (after filtering for groups that are in products). Result count: $(($adGroupsInScope | Measure-Object).Count)"
-
-    # Get AD Groupmemberships of groups
-    try {
-        if ($verboseLogging -eq $true) {
-            Hid-Write-Status -Event Information -Message "Enhancing AD groups with members"
-        }
-        $adGroupsInScope | Add-Member -MemberType NoteProperty -Name "members" -Value $null -Force
-        $totalADGroupMembers = 0
-        foreach ($adGroup in $adGroupsInScope) {
-            try {
-                $properties = @(
-                    $adUserCorrelationProperty
-                    , "distinguishedName"
-                    , "objectClass"
-                )
-
-                # if ($verboseLogging -eq $true) {
-                #     Hid-Write-Status -Event Information -Message "Querying AD groupmembers of group [$($adGroup.SID)]"
-                # }
-                $adGroupMembers = $null
-                $adGroupMembers = Get-ADObject -LDAPFilter "(memberOf=$($adGroup.distinguishedName))" -Properties $properties
-                
-                if (($adGroupMembers.SID | Measure-Object).Count -ge 1) {
-                    $adGroupMembers | ForEach-Object {
-                        # Get value of SID
-                        $_.SID = $_.SID.Value
-                    }
-                }
-
-                # Filter for user objects
-                $adGroupMembers = $adGroupMembers | Where-Object { $_.objectClass -eq "user" }
-
-                # Filter for users that exist in HelloID
-                $adGroupMembersInScope = $null
-                $adGroupMembersInScope = $adGroupMembers | Where-Object { $_.$adUserCorrelationProperty -in $helloIDUsersInScope.$helloIDUserCorrelationProperty }
-
-                # Set property of AD group with members
-                $adGroup.members = $adGroupMembersInScope
-
-                # if ($verboseLogging -eq $true) {
-                #     Hid-Write-Status -Event Success -Message "Successfully queried AD groupmembers of group [$($adGroup.SID)] (after filtering for users that exist in HelloID). Result count: $(($adGroupMembersInScope | Measure-Object).Count)"                
-                # }
-
-                foreach ($adGroupMember in $adGroupMembers) {
-                    $totalADGroupMembers++
-                }
-            }
-            catch {
-                $ex = $PSItem
-                $errorMessage = Get-ErrorMessage -ErrorObject $ex
-
-                if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
-                    
-                    Hid-Write-Status -Event Error -Message "Error querying AD groupmembers of group [$($adGroup.SID)]. Error Message: $($errorMessage.AuditErrorMessage)"
-                }
-            }
-        }
-
-        Hid-Write-Status -Event Success -Message "Successfully enhanced AD groups with members (after filtering for users that exist in HelloID). Result count: $($totalADGroupMembers)"
-    }
-    catch {
-        $ex = $PSItem
-        $errorMessage = Get-ErrorMessage -ErrorObject $ex
-
-        Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
-
-        throw "Error querying AD groupmembers. Error Message: $($errorMessage.AuditErrorMessage)"
-    }
-
-    $adGroupsGrouped = $adGroups | Group-Object -Property $adGroupCorrelationProperty -AsHashTable -AsString
+    Hid-Write-Status -Event Success -Message "Successfully queried AD groups (after filtering for groups that are in products). Result count: $(($adGroups | Measure-Object).Count)"
 }
 catch {
     $ex = $PSItem
@@ -475,6 +419,73 @@ catch {
 
     throw "Error querying AD groups that match filter [$($adQuerySplatParams.Filter)]. Error Message: $($errorMessage.AuditErrorMessage)"
 }
+#region Get AD Groups
+
+#region Get members of AD Groups
+try {
+    [System.Collections.ArrayList]$adGroupsWithMembers = @()
+    Write-Verbose "Querying AD Groups with members"
+    foreach ($adGroup in $adGroups) {       
+        try {            
+            $adGroupWithMembersObject = [PSCustomObject]@{
+                Name       = $adGroup.Name
+                ObjectGUID = $adGroup.objectGUID
+                Users      = [System.Collections.ArrayList]@()
+            }
+
+            Write-Verbose "Querying Members of Group [$($adGroup.Name)]"
+
+            $properties = @(
+                $adUserCorrelationProperty
+                , "name"
+                , "distinguishedName"
+                , "objectClass"
+            )
+
+            $adGroupMembers = $null
+            $adGroupMembers = Get-ADObject -LDAPFilter "(memberOf=$($adGroup.distinguishedName))" -Properties $properties
+
+            # Filter for user objects
+            $adGroupMembers = $adGroupMembers | Where-Object { $_.objectClass -eq "user" }
+
+            foreach ($adGroupMember in $adGroupMembers) {
+                $userMemberOfObject = [PSCustomObject]@{
+                    Name                       = $adGroupMember.Name
+                    ObjectGUID                 = $adGroupMember.objectGUID
+                    $adUserCorrelationProperty = $adGroupMember.$adUserCorrelationProperty
+                }
+
+                [void]$adGroupWithMembersObject.Users.Add($userMemberOfObject)
+            }
+
+            [void]$adGroupsWithMembers.Add($adGroupWithMembersObject)
+
+            if ($verboseLogging -eq $true) {
+                Hid-Write-Status -Event Success "Successfully queried Members of Group [$($adGroup.Name)]. Result count: $(($adGroupMembers | Measure-Object).Count)"
+            }
+        }
+        catch {
+            $ex = $PSItem
+            $errorMessage = Get-ErrorMessage -ErrorObject $ex
+        
+            Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
+        
+            throw "Error querying Full Access Permissions to Mailbox [$($exoMailbox.UserPrincipalName)] Error Message: $($errorMessage.AuditErrorMessage)"
+        }
+    }
+    $adGroupsWithMembersGrouped = $adGroupsWithMembers | Group-Object -Property ObjectGUID -AsHashTable -AsString
+
+    Hid-Write-Status -Event Success -Message "Successfully queried AD Groups with members. Result count: $(($adGroupsWithMembers.Users | Measure-Object).Count)"
+}
+catch {
+    $ex = $PSItem
+    $errorMessage = Get-ErrorMessage -ErrorObject $ex
+
+    Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
+
+    throw "Error querying AD Groups with members. Error Message: $($errorMessage.AuditErrorMessage)"
+}
+#endregion Get members of AD Groups
 
 Hid-Write-Status -Event Information -Message "------[Calculations of combined data]------"
 # Calculate new and obsolete product assignments
@@ -482,34 +493,32 @@ try {
     $newProductAssignmentObjects = [System.Collections.ArrayList]@()
     $obsoleteProductAssignmentObjects = [System.Collections.ArrayList]@()
     $existingProductAssignmentObjects = [System.Collections.ArrayList]@()
-    foreach ($product in $helloIDSelfServiceProductsInScope) {
+    foreach ($product in $helloIDSelfServiceProductsInScopeWithActionsInScope) {
         # if ($verboseLogging -eq $true) {
         #     Hid-Write-Status -Event Information -Message "Calculating new and obsolete product assignments for Product [$($product.name)]"
         # }
 
         # Get Group from Product Action
-        $productActionsInScope = $helloIDSelfServiceProductActionsInScope | Where-Object { $_.objectGUID -eq $product.selfServiceProductGUID }
-        $variablesInScope = [PSCustomObject]$productActionsInScope | Select-Object -ExpandProperty variables
-        $groupName = [PSCustomObject]$variablesInScope | Where-Object { $_.name -eq "$PowerShellActionVariableCorrelationProperty" } | Select-Object value | Sort-Object value -Unique | Select-Object -ExpandProperty value
+        $adGroupGuid = [Guid]::New(($product.code.replace("$ProductSkuPrefix", "")))
         $adGroup = $null
-        $adGroup = $adGroupsGrouped[$groupName]
+        $adGroup = $adGroupsWithMembersGrouped["$($adGroupGuid)"]
         if (($adGroup | Measure-Object).Count -eq 0) {
-            Hid-Write-Status -Event Error -Message "No AD group found with $adGroupCorrelationProperty [$($groupName)] for Product [$($product.name)]"
+            Hid-Write-Status -Event Error -Message "No AD group found with objectGuid [$($adGroupGuid)] for Product [$($product.name)]"
             continue
         }
         elseif (($adGroup | Measure-Object).Count -gt 1) {
-            Hid-Write-Status -Event Error -Message "Multiple AD groups found with $adGroupCorrelationProperty [$($groupName)] for Product [$($product.name)]. Please correct this so the $adGroupCorrelationProperty of the AD group is unique"
+            Hid-Write-Status -Event Error -Message "Multiple AD groups found with objectGuid [$($adGroupGuid)] for Product [$($product.name)]. Please correct this so the objectGuid of the AD group is unique"
             continue
         }
 
         # Get AD user objects for additional data to match to HelloID user
-        $adUsersInScope = $adGroup.members
+        $adUsersInScope = $adGroup.Users
         
         # Get HelloID user objects to assign to the product
         $productUsersInScope = [System.Collections.ArrayList]@()
         foreach ($adUser in $adUsersInScope) {
             $helloIDUser = $null
-            $helloIDUser = $helloIDUsersInScopeGrouped[$adUser.$adUserCorrelationProperty]
+            $helloIDUser = $helloIDUsersGrouped["$($adUser.$adUserCorrelationProperty)"]
 
             if (($helloIDUser | Measure-Object).Count -eq 0) {
                 if ($verboseLogging -eq $true) {
@@ -525,14 +534,14 @@ try {
         # Get current product assignments
         $currentProductassignments = $null
         if (($helloIDSelfServiceProductassignmentsInScope | Measure-Object).Count -ge 1) {
-            $currentProductassignments = $helloIDSelfServiceProductassignmentsInScopeGrouped[$product.selfServiceProductGUID]
+            $currentProductassignments = $helloIDSelfServiceProductassignmentsInScopeGrouped["$($product.productId)"]
         }
 
         # Define assignments to grant
         $newProductassignments = $productUsersInScope | Where-Object { $_.userGuid -notin $currentProductassignments.userGuid }
         foreach ($newProductAssignment in $newProductassignments) {
             $newProductAssignmentObject = [PSCustomObject]@{
-                productGuid            = "$($product.selfServiceProductGUID)"
+                productGuid            = "$($product.productId)"
                 productName            = "$($product.name)"
                 userGuid               = "$($newProductAssignment.userGuid)"
                 userName               = "$($newProductAssignment.userName)"
@@ -547,7 +556,7 @@ try {
         $obsoleteProductassignments = $currentProductassignments | Where-Object { $_.userGuid -notin $productUsersInScope.userGuid }
         foreach ($obsoleteProductassignment in $obsoleteProductassignments) { 
             $obsoleteProductAssignmentObject = [PSCustomObject]@{
-                productGuid            = "$($product.selfServiceProductGUID)"
+                productGuid            = "$($product.productId)"
                 productName            = "$($product.name)"
                 userGuid               = "$($obsoleteProductassignment.userGuid)"
                 userName               = "$($obsoleteProductassignment.userName)"
@@ -562,7 +571,7 @@ try {
         $existingProductassignments = $currentProductassignments | Where-Object { $_.userGuid -in $productUsersInScope.userGuid }
         foreach ($existingProductassignment in $existingProductassignments) { 
             $existingProductAssignmentObject = [PSCustomObject]@{
-                productGuid            = "$($product.selfServiceProductGUID)"
+                productGuid            = "$($product.productId)"
                 productName            = "$($product.name)"
                 userGuid               = "$($existingProductassignment.userGuid)"
                 userName               = "$($existingProductassignment.userName)"
@@ -714,19 +723,19 @@ try {
     }
 
     if ($dryRun -eq $false) {
-        Hid-Write-Status -Event Success -Message "Successfully synchronized [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
-        Hid-Write-Summary -Event Success -Message "Successfully synchronized [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+        Hid-Write-Status -Event Success -Message "Successfully synchronized [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+        Hid-Write-Summary -Event Success -Message "Successfully synchronized [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
     }
     else {
-        Hid-Write-Status -Event Success -Message "DryRun: Would synchronize [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
-        Hid-Write-Summary -Event Success -Message "DryRun: Would synchronize [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+        Hid-Write-Status -Event Success -Message "DryRun: Would synchronize [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+        Hid-Write-Summary -Event Success -Message "DryRun: Would synchronize [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
     }
 }
 catch {
-    Hid-Write-Status -Event Error -Message "Error synchronization of [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+    Hid-Write-Status -Event Error -Message "Error synchronization of [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
     Hid-Write-Status -Event Error -Message "Error at Line [$($_.InvocationInfo.ScriptLineNumber)]: $($_.InvocationInfo.Line)."
     Hid-Write-Status -Event Error -Message "Exception message: $($_.Exception.Message)"
     Hid-Write-Status -Event Error -Message "Exception details: $($_.errordetails)"
-    Hid-Write-Summary -Event Failed -Message "Error synchronization of [$($totalADGroupMembers)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
+    Hid-Write-Summary -Event Failed -Message "Error synchronization of [$(($adGroupsWithMembers.Users | Measure-Object).Count)] Active Directory groupmemberships to [$totalProductAssignments] HelloID Self service Productassignments for [$(($helloIDSelfServiceProductsInScope | Measure-Object).Count)] HelloID Self service Products"
 }
 #endregion
