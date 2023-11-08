@@ -263,7 +263,7 @@ try {
     [System.Collections.ArrayList]$helloIDSelfServiceProductsInScopeWithActions = @()
     Write-Verbose "Querying HelloID Self service Products with Actions"
     foreach ($helloIDSelfServiceProductInScope in $helloIDSelfServiceProductsInScope) {
-        #region Get objects with Full Access to Shared Mailbox
+        #region Get objects with membership to AD group
         try {
             $helloIDSelfServiceProductInScopeWithActionsObject = [PSCustomObject]@{
                 productId   = $helloIDSelfServiceProductInScope.selfServiceProductGUID
@@ -307,7 +307,7 @@ try {
         
             throw "Error querying actions of Product [$($helloIDSelfServiceProductInScope.productId)]. Error Message: $($errorMessage.AuditErrorMessage)"
         }
-        #endregion Get objects with Full Access to Shared Mailbox
+        #endregion Get objects with with membership to AD group
     }
 
     # Filter for products with specified actions
@@ -395,7 +395,7 @@ try {
             if ($verboseLogging -eq $true) {
                 Hid-Write-Status -Event Information -Message "Querying AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]"
             }
-            $adGroupsInOU = Get-ADGroup @adQuerySplatParams -SearchBase $ADGroupsOU -SearchScope OneLevel | Select-Object $properties
+            $adGroupsInOU = Get-ADGroup @adQuerySplatParams -SearchBase $ADGroupsOU | Select-Object $properties
             if ($adGroupsInOU -is [array]) {
                 [void]$adGroups.AddRange($adGroupsInOU)
             }
@@ -409,7 +409,7 @@ try {
         }
     }
 
-    Hid-Write-Status -Event Success -Message "Successfully queried AD groups (after filtering for groups that are in products). Result count: $(($adGroups | Measure-Object).Count)"
+    Hid-Write-Status -Event Success -Message "Successfully queried AD groups. Result count: $(($adGroups | Measure-Object).Count)"
 }
 catch {
     $ex = $PSItem
@@ -470,7 +470,7 @@ try {
         
             Hid-Write-Status -Event Error -Message "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($($errorMessage.VerboseErrorMessage))"
         
-            throw "Error querying Full Access Permissions to Mailbox [$($exoMailbox.UserPrincipalName)] Error Message: $($errorMessage.AuditErrorMessage)"
+            throw "Error querying Members of Group [$($adGroup.Name)] Error Message: $($errorMessage.AuditErrorMessage)"
         }
     }
     $adGroupsWithMembersGrouped = $adGroupsWithMembers | Group-Object -Property ObjectGUID -AsHashTable -AsString
