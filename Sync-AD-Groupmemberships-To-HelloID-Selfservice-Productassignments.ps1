@@ -33,9 +33,9 @@ $ProductSkuPrefix = "APPGRP"
 $PowerShellActionName = "Add-ADUserToADGroup" # Define the name of the PowerShell action
 
 #Correlation Configuration
-# The name of the property of HelloID users to match to AD users - value has to match the value of the propertye specified in $adUserCorrelationProperty
+# The name of the property of HelloID users to match to AD users - value has to match the value of the property specified in $adUserCorrelationProperty
 $helloIDUserCorrelationProperty = "username"
-# The name of the property of AD users to match to HelloID users - value has to match the value of the propertye specified in $helloIDUserCorrelationProperty
+# The name of the property of AD users to match to HelloID users - value has to match the value of the property specified in $helloIDUserCorrelationProperty
 $adUserCorrelationProperty = "userPrincipalName"
 
 #region functions
