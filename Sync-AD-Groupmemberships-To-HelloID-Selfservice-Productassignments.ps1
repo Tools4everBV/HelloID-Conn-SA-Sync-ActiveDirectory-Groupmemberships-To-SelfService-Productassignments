@@ -33,9 +33,9 @@ $ProductSkuPrefix = "APPGRP"
 $PowerShellActionName = "Add-ADUserToADGroup" # Define the name of the PowerShell action
 
 #Correlation Configuration
-# The name of the property of HelloID users to match to AD users - value has to match the value of the propertye specified in $adUserCorrelationProperty
+# The name of the property of HelloID users to match to AD users - value has to match the value of the property specified in $adUserCorrelationProperty
 $helloIDUserCorrelationProperty = "username"
-# The name of the property of AD users to match to HelloID users - value has to match the value of the propertye specified in $helloIDUserCorrelationProperty
+# The name of the property of AD users to match to HelloID users - value has to match the value of the property specified in $helloIDUserCorrelationProperty
 $adUserCorrelationProperty = "userPrincipalName"
 
 #region functions
@@ -296,7 +296,7 @@ try {
             [void]$helloIDSelfServiceProductsInScopeWithActions.Add($helloIDSelfServiceProductInScopeWithActionsObject)
 
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Success "Successfully queried actions of Product [$($helloIDSelfServiceProductInScope.selfServiceProductGUID)]. Result count: $(($helloIDSelfServiceProduct.actions | Measure-Object).Count)"
+                Write-Verbose "Successfully queried actions of Product [$($helloIDSelfServiceProductInScope.selfServiceProductGUID)]. Result count: $(($helloIDSelfServiceProduct.actions | Measure-Object).Count)"
             }
         }
         catch {
@@ -381,19 +381,19 @@ try {
 
     if ([String]::IsNullOrEmpty($ADGroupsOUs)) {
         if ($verboseLogging -eq $true) {
-            Hid-Write-Status -Event Information -Message "Querying AD groups that match filter [$($adQuerySplatParams.Filter)]"
+            Write-Verbose "Querying AD groups that match filter [$($adQuerySplatParams.Filter)]"
         }
         $adGroups = Get-ADGroup @adQuerySplatParams | Select-Object $properties
  
         if ($verboseLogging -eq $true) {
-            Hid-Write-Status -Event Success -Message "Successfully queried AD groups that match filter [$($adQuerySplatParams.Filter)]. Result count: $(($adGroups | Measure-Object).Count)"
+            Write-Verbose "Successfully queried AD groups that match filter [$($adQuerySplatParams.Filter)]. Result count: $(($adGroups | Measure-Object).Count)"
         }
     }
     else {
         $adGroups = [System.Collections.ArrayList]@()
         foreach ($ADGroupsOU in $ADGroupsOUs) {
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Information -Message "Querying AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]"
+                Write-Verbose "Querying AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]"
             }
             $adGroupsInOU = Get-ADGroup @adQuerySplatParams -SearchBase $ADGroupsOU | Select-Object $properties
             if ($adGroupsInOU -is [array]) {
@@ -404,7 +404,7 @@ try {
             }
             
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Success -Message "Successfully queried AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]. Result count: $(($adGroupsInOU | Measure-Object).Count)"
+                Write-Verbose "Successfully queried AD groups that match filter [$($adQuerySplatParams.Filter)] in OU [$($ADGroupsOU)]. Result count: $(($adGroupsInOU | Measure-Object).Count)"
             }
         }
     }
@@ -461,7 +461,7 @@ try {
             [void]$adGroupsWithMembers.Add($adGroupWithMembersObject)
 
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Success "Successfully queried Members of Group [$($adGroup.Name)]. Result count: $(($adGroupMembers | Measure-Object).Count)"
+                Write-Verbose "Successfully queried Members of Group [$($adGroup.Name)]. Result count: $(($adGroupMembers | Measure-Object).Count)"
             }
         }
         catch {
@@ -495,7 +495,7 @@ try {
     $existingProductAssignmentObjects = [System.Collections.ArrayList]@()
     foreach ($product in $helloIDSelfServiceProductsInScopeWithActionsInScope) {
         # if ($verboseLogging -eq $true) {
-        #     Hid-Write-Status -Event Information -Message "Calculating new and obsolete product assignments for Product [$($product.name)]"
+        #     Write-Verbose "Calculating new and obsolete product assignments for Product [$($product.name)]"
         # }
 
         # Get Group from Product Action
@@ -522,7 +522,7 @@ try {
 
             if (($helloIDUser | Measure-Object).Count -eq 0) {
                 if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Error -Message "No HelloID user found with $helloIDUserCorrelationProperty [$($adUser.$adUserCorrelationProperty)] for AD user [$($adUser.distinguishedName)] for Product [$($product.name)]"
+                    Write-Verbose "No HelloID user found with $helloIDUserCorrelationProperty [$($adUser.$adUserCorrelationProperty)] for AD user [$($adUser.distinguishedName)] for Product [$($product.name)]"
                     continue
                 }
             }
@@ -613,7 +613,7 @@ try {
     foreach ($newProductAssignmentObject in $newProductAssignmentObjects) {
         try {
             # if ($verboseLogging -eq $true) {
-            #     Hid-Write-Status -Event Information -Message "Granting productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]""
+            #     Write-Verbose "Granting productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]""
             # }
         
             $body = @{
@@ -632,13 +632,13 @@ try {
             if ($dryRun -eq $false) {
                 $grantProductassignmentToUser = Invoke-HIDRestMethod @splatParams
                 if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Success -Message "Successfully granted productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]"
+                    Write-Verbose "Successfully granted productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]"
                 }
                 $productAssigmentGrantsSuccess++
             }
             else {
                 if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Success -Message "DryRun: Would grant productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]"
+                    Write-Verbose "DryRun: Would grant productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]"
                 }   
             }
         }
@@ -650,7 +650,7 @@ try {
         
             $productAssigmentGrantsError++
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Error -Message "Error granting productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]. Error Message: $($errorMessage.AuditErrorMessage)"
+                Write-Verbose "Error granting productassignment for HelloID user [$($newProductAssignmentObject.username) ($($newProductAssignmentObject.userGuid))] to HelloID Self service Product [$($newProductAssignmentObject.productName) ($($newProductAssignmentObject.productGuid))]. Error Message: $($errorMessage.AuditErrorMessage)"
             }
         }
     }
@@ -671,7 +671,7 @@ try {
     foreach ($obsoleteProductAssignmentObject in $obsoleteProductAssignmentObjects) { 
         try {
             # if ($verboseLogging -eq $true) {
-            #     Hid-Write-Status -Event Information -Message "Revoking productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]""
+            #     Write-Verbose "Revoking productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]""
             # }
             
             $body = @{
@@ -689,13 +689,13 @@ try {
             if ($dryRun -eq $false) {
                 $revokeProductassignmentToUser = Invoke-HIDRestMethod @splatParams
                 if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Success -Message "Successfully revoked productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]"
+                    Write-Verbose "Successfully revoked productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]"
                 }
                 $productAssigmentRevokesSuccess++
             }
             else {
                 if ($verboseLogging -eq $true) {
-                    Hid-Write-Status -Event Success -Message "DryRun: Would revoke productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]"
+                    Write-Verbose "DryRun: Would revoke productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]"
                 }   
             }
         }
@@ -707,7 +707,7 @@ try {
             
             $productAssigmentRevokesError++
             if ($verboseLogging -eq $true) {
-                Hid-Write-Status -Event Error -Message "Error revoking productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]. Error Message: $($errorMessage.AuditErrorMessage)"
+                Write-Verbose "Error revoking productassignment for HelloID user [$($obsoleteProductAssignmentObject.username) ($($obsoleteProductAssignmentObject.userGuid))] to HelloID Self service Product [$($obsoleteProductAssignmentObject.productName) ($($obsoleteProductAssignmentObject.productGuid))]. Error Message: $($errorMessage.AuditErrorMessage)"
             }
         }
     }
