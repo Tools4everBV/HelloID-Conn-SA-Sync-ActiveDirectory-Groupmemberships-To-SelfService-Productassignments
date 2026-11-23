@@ -7,6 +7,16 @@ Synchronizes AD groupmemberships to HelloID Self service productassignments
 <a href="https://github.com/Tools4everBV/HelloID-Conn-SA-Sync-ActiveDirectory-Groupmemberships-To-SelfService-Productassignments/graphs/contributors"><img alt="GitHub contributors" src="https://img.shields.io/github/contributors/Tools4everBV/HelloID-Conn-SA-Sync-ActiveDirectory-Groupmemberships-To-SelfService-Productassignments?color=2b9348"></a>
 
 
+> [!IMPORTANT]
+> **Best Practice - Run once. If scheduled, maximum once per month**
+>
+> **Why?**
+> This sync processes large volumes (e.g., 1,000 groups with 100 members each = 100,000 assignments) and causes significant system load. It is designed as a **one-time migration** to bring existing permissions into HelloID Service Automation as product assignments.
+>
+> Ideally you run it once. If permissions are also still assigned manually or via Provisioning, a scheduled run is acceptable, but no more than **once per month**.
+>
+> If a higher frequency is required for your organization, please contact **Tools4ever Support**. This helps us understand your use case and provide proper guidance.
+
 | :information_source: Information |
 |:---------------------------|
 | This repository contains the connector and configuration code only. The implementer is responsible to acquire the connection details such as username, password, certificate, etc. You might even need to sign a contract or agreement with the supplier before implementing this connector. Please contact the client's application manager to coordinate the connector requirements.       |
